@@ -316,47 +316,71 @@ document.getElementById('sb').addEventListener('focus',buildQuick);
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 const isSA=window.navigator.standalone||window.matchMedia('(display-mode:standalone)').matches;
 if(isIOS&&!isSA)document.getElementById('iosBar').classList.add('show');
-(()=>{
-  if(!('serviceWorker' in navigator)) return;
-  const CACHE='pl5c';
-  const swCode=`
-const CACHE='pl5c';
-const PAGE_URL=self.location.origin+self.location.pathname.replace(/\/sw\.js$/,'/')||'/';
+(function(){
+  // Strategy 1: Try Service Worker (works when served from a server)
+  if('serviceWorker' in navigator){
+    const SW_CODE = `
+const V='pl5c';
 self.addEventListener('install',e=>{
-  e.waitUntil(
-    caches.open(CACHE).then(c=>{
-      return c.addAll([PAGE_URL,'${location.href}']);
-    }).catch(()=>caches.open(CACHE).then(c=>c.add(PAGE_URL)))
-  );
-  self.skipWaiting();
+  const u=self.registration.scope;
+  e.waitUntil(caches.open(V).then(c=>c.add(u)).then(()=>self.skipWaiting()));
 });
 self.addEventListener('activate',e=>{
-  e.waitUntil(clients.claim());
+  e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==V).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));
 });
 self.addEventListener('fetch',e=>{
-  if(e.request.mode==='navigate'){
-    e.respondWith(
-      fetch(e.request).then(r=>{
-        const rc=r.clone();
-        caches.open(CACHE).then(c=>c.put(e.request,rc));
-        return r;
-      }).catch(()=>caches.match(e.request).then(r=>r||caches.match(PAGE_URL)))
-    );
-    return;
-  }
+  const scope=self.registration.scope;
   e.respondWith(
-    caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>new Response('',{status:408})))
+    caches.match(e.request).then(r=>{
+      if(r) return r;
+      return fetch(e.request).then(res=>{
+        if(res&&res.ok){const cl=res.clone();caches.open(V).then(c=>c.put(e.request,cl));}
+        return res;
+      }).catch(()=>caches.match(scope));
+    })
   );
 });
 `;
-  const blob=new Blob([swCode],{type:'application/javascript'});
-  const swUrl=URL.createObjectURL(blob);
-  navigator.serviceWorker.register(swUrl).then(reg=>{
-    // Cache the current page immediately
-    if(caches&&location.href){
-      caches.open(CACHE).then(c=>c.add(location.href));
+    // Encode as base64 data URL to avoid blob scope issues
+    const b64 = btoa(unescape(encodeURIComponent(SW_CODE)));
+    const dataUrl = 'data:application/javascript;base64,' + b64;
+    navigator.serviceWorker.register(dataUrl, {scope:'./'})
+      .then(()=>{})
+      .catch(()=>{});
+  }
+
+  // Strategy 2: Direct Cache API (works in all modern browsers including Safari)
+  // This caches the page HTML directly so it loads offline even without SW
+  if('caches' in window){
+    const CACHE='pl5c';
+    const pageUrl = location.href.split('?')[0].split('#')[0];
+
+    function showOfflineToast(isNew){
+      const t=document.createElement('div');
+      t.textContent= isNew ? '✅ Ready for offline use' : '✅ Offline ready';
+      t.style.cssText='position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#1b5e20;color:#fff;padding:10px 20px;border-radius:24px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);opacity:0;transition:opacity 0.4s';
+      document.body.appendChild(t);
+      setTimeout(()=>t.style.opacity='1',50);
+      setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),400);},3000);
     }
-  }).catch(()=>{});
+
+    window.addEventListener('load',()=>{
+      caches.open(CACHE).then(cache=>{
+        cache.match(pageUrl).then(existing=>{
+          if(!existing){
+            fetch(pageUrl).then(res=>{
+              if(res&&res.ok){
+                cache.put(pageUrl,res);
+                setTimeout(()=>showOfflineToast(true),800);
+              }
+            }).catch(()=>{});
+          } else {
+            setTimeout(()=>showOfflineToast(false),1200);
+          }
+        });
+      });
+    });
+  }
 })();
 buildTabs();buildQuick();render();
 </script>
