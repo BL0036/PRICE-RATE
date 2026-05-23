@@ -316,7 +316,48 @@ document.getElementById('sb').addEventListener('focus',buildQuick);
 const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
 const isSA=window.navigator.standalone||window.matchMedia('(display-mode:standalone)').matches;
 if(isIOS&&!isSA)document.getElementById('iosBar').classList.add('show');
-if('serviceWorker' in navigator){const sw=`const V='pl5b';self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.add('/')));self.skipWaiting()});self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>caches.match('/'))))})`;navigator.serviceWorker.register(URL.createObjectURL(new Blob([sw],{type:'application/javascript'}))).catch(()=>{});}
+(()=>{
+  if(!('serviceWorker' in navigator)) return;
+  const CACHE='pl5c';
+  const swCode=`
+const CACHE='pl5c';
+const PAGE_URL=self.location.origin+self.location.pathname.replace(/\/sw\.js$/,'/')||'/';
+self.addEventListener('install',e=>{
+  e.waitUntil(
+    caches.open(CACHE).then(c=>{
+      return c.addAll([PAGE_URL,'${location.href}']);
+    }).catch(()=>caches.open(CACHE).then(c=>c.add(PAGE_URL)))
+  );
+  self.skipWaiting();
+});
+self.addEventListener('activate',e=>{
+  e.waitUntil(clients.claim());
+});
+self.addEventListener('fetch',e=>{
+  if(e.request.mode==='navigate'){
+    e.respondWith(
+      fetch(e.request).then(r=>{
+        const rc=r.clone();
+        caches.open(CACHE).then(c=>c.put(e.request,rc));
+        return r;
+      }).catch(()=>caches.match(e.request).then(r=>r||caches.match(PAGE_URL)))
+    );
+    return;
+  }
+  e.respondWith(
+    caches.match(e.request).then(r=>r||fetch(e.request).catch(()=>new Response('',{status:408})))
+  );
+});
+`;
+  const blob=new Blob([swCode],{type:'application/javascript'});
+  const swUrl=URL.createObjectURL(blob);
+  navigator.serviceWorker.register(swUrl).then(reg=>{
+    // Cache the current page immediately
+    if(caches&&location.href){
+      caches.open(CACHE).then(c=>c.add(location.href));
+    }
+  }).catch(()=>{});
+})();
 buildTabs();buildQuick();render();
 </script>
 </body>
